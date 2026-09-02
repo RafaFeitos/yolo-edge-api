@@ -1,4 +1,3 @@
-cat > scripts/validate_model.py << 'EOF'
 """
 scripts/validate_model.py
 Quality gate: bloqueia o deploy se o mAP@0.5 estiver abaixo do limiar.
@@ -42,10 +41,10 @@ def main():
     print(f"[INFO] mAP@0.5 = {map50:.4f} | Limiar: {args.threshold:.4f}")
 
     if map50 < args.threshold:
-        print(f"[FALHA] mAP abaixo do limiar. Deploy bloqueado.")
+        print("[FALHA] mAP abaixo do limiar. Deploy bloqueado.")
         sys.exit(1)
 
-    print(f"[OK] Quality gate aprovado. Deploy autorizado.")
+    print("[OK] Quality gate aprovado. Deploy autorizado.")
 
 
 if __name__ == "__main__":

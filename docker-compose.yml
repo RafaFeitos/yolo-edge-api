@@ -2,8 +2,7 @@ version: "3.8"
 
 services:
   yolo-api:
-    image:
-ghcr.io/rafafeitos/yolo-edge-api/yolo-api:latest
+    image: ghcr.io/rafafeitos/yolo-edge-api/yolo-api:sha-2fbd301
     build:
       context: .
       dockerfile: Dockerfile.api

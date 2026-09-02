@@ -5,10 +5,10 @@ Pré-requisito: models/yolov8n.pt presente no sistema de arquivos.
 """
 import base64
 import io
-import json
 import os
 import sys
 from pathlib import Path
+
 import numpy as np
 import pytest
 from fastapi.testclient import TestClient
@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "app"))
 
 os.environ.setdefault("MODEL_NAME", "yolov8n.pt")
 
-from app.main import app, _decode_image
+from app.main import _decode_image, app
 
 client = TestClient(app)
 ASSETS = Path(__file__).parent / "assets"
