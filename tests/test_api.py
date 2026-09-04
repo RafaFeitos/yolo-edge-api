@@ -69,7 +69,7 @@ class TestDecodeImage:
         assert result.shape[2] == 3
 
     def test_invalid_base64_raises(self):
-        with pytest.raises(Exception):
+        with pytest.raises(Exception, match=r".*"):
             _decode_image("dado_invalido_nao_e_base64")
 
 # ────────────────────────────────────────────────────────────
