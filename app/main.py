@@ -19,6 +19,8 @@ from schemas import (
     PredictResponse,
 )
 
+from preprocessing.preprocessor import CONFIG_DEFAULT, Preprocessor
+
 
 def log_event(event: str, level: str = "INFO", **kwargs):
     """Emite um evento estruturado em JSON para stdout."""
@@ -38,6 +40,9 @@ app = FastAPI(
 
 # ── Métricas simples em memória ─────────────────────────────
 _metrics = {"total": 0, "success": 0, "total_ms": 0.0}
+
+# ── Instância global do preprocessor (Bloco 6) ──────────────
+_preprocessor = Preprocessor(CONFIG_DEFAULT)
 
 def _decode_image(image_base64: str) -> np.ndarray:
     """Converte base64 → numpy array RGB."""
@@ -61,27 +66,37 @@ def _load_image_from_request(request: PredictRequest) -> np.ndarray:
         return np.array(img)
 
 def _run_inference(
-    image_np: np.ndarray, 
+    image_np: np.ndarray,
     model_name: str,
     confidence: float
 ) -> PredictResponse:
+    """Executa a inferência com pré-processamento via preprocessor."""
     model = load_model(model_name)
+
+    # image_np chega em RGB (já convertido em _decode_image / _load_image_from_request)
+    # O Preprocessor espera BGR, então convertemos temporariamente.
+    frame_bgr = image_np[:, :, ::-1]          # RGB → BGR
+    preproc_res = _preprocessor.process(frame_bgr)
+    frame_ready = preproc_res.frame          # RGB, letterboxed, pronto para o modelo
+
     t0 = time.perf_counter()
-    results = model(image_np, conf=confidence, verbose=False)
+    results = model(frame_ready, conf=confidence, verbose=False)
     elapsed_ms = (time.perf_counter() - t0) * 1000
-    
+
     detections = []
     for r in results:
         for box in r.boxes:
-            coords = box.xyxy[0].tolist()
+            # Ajusta as coordenadas do espaço letterboxed de volta ao espaço original
+            bbox_lb = box.xyxy[0].numpy().reshape(1, 4)
+            bbox_orig = _preprocessor.adjust_boxes(bbox_lb, preproc_res)[0]
             cls_id = int(box.cls[0].item())
             conf_val = float(box.conf[0].item())
             detections.append(Detection(
                 label=model.names[cls_id],
                 confidence=round(conf_val, 4),
-                bbox=[round(float(c), 2) for c in coords],
+                bbox=[round(float(c), 2) for c in bbox_orig],
             ))
-            
+
     h, w = image_np.shape[:2]
     return PredictResponse(
         detections=detections,
@@ -150,7 +165,6 @@ def predict_image(request: PredictRequest):
     """Executa a inferência e retorna a imagem anotada em JPEG com cores 100% calibradas em RGB."""
     _metrics["total"] += 1
     try:
-        # 1. Carrega imagem em RGB
         img_rgb = _load_image_from_request(request)
         model = load_model(request.model_name)
         t0 = time.perf_counter()
@@ -158,11 +172,8 @@ def predict_image(request: PredictRequest):
         elapsed_ms = (time.perf_counter() - t0) * 1000
         _metrics["success"] += 1
         _metrics["total_ms"] += elapsed_ms
-        
-        # 2. plot() retorna o array RGB anotado
+
         annotated_array = results[0].plot()
-        
-        # 3. Salva diretamente via PIL (RGB nativo da web)
         annotated_pil = Image.fromarray(annotated_array)
         buffer = io.BytesIO()
         annotated_pil.save(buffer, format="JPEG", quality=95)

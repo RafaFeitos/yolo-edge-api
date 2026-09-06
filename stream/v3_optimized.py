@@ -72,21 +72,21 @@ class OptimizedCamera:
             if not chunk:
                 break
             self._raw += chunk
-            
+
             end = self._raw.rfind(b"\xff\xd9")
             if end == -1:
                 continue
             start = self._raw.rfind(b"\xff\xd8", 0, end)
             if start == -1:
                 continue
-                
+
             jpg = self._raw[start:end + 2]
             self._raw = self._raw[end + 2:]
-            
+
             frame = cv2.imdecode(np.frombuffer(jpg, dtype=np.uint8), cv2.IMREAD_COLOR)
             if frame is None:
                 continue
-                
+
             self.frames_in += 1
             if self._buf.full():
                 try:
@@ -127,6 +127,11 @@ class RealtimeDetector:
         self.conf = conf
         self.infer_every = infer_every
         self.infer_size = infer_size
+
+        # ── Integração do preprocessor (Bloco 6) ──
+        from preprocessing.preprocessor import PreprocessConfig, Preprocessor
+        self.preprocessor = Preprocessor(PreprocessConfig(infer_size=infer_size))
+
         self._frame_idx = 0
         self._last_boxes = []  # [(label, conf, x1,y1,x2,y2), ...]
         self._last_infer_ms = 0.0
@@ -142,39 +147,35 @@ class RealtimeDetector:
         Retorna o frame com bounding boxes e OSD sobrepostos.
         """
         self._frame_idx += 1
-        
+
         # ── Atualiza FPS ─────────────────────────────────────
         now = time.perf_counter()
         dt = now - self._t_last
         self._t_last = now
         self._fps_window.append(dt)
-        
+
         # ── Inferência (apenas a cada N frames) ──────────────
         if self._frame_idx % self.infer_every == 0:
-            # Redimensiona para acelerar a inferência
-            h, w = frame.shape[:2]
-            small = cv2.resize(frame, (self.infer_size, self.infer_size))
-            
+            # Substitui o resize ingênuo + reescala manual pelo preprocessor
+            preproc_result = self.preprocessor.process(frame)
             t0 = time.perf_counter()
-            results = self.model(small, conf=self.conf, verbose=False)
+            results = self.model(preproc_result.frame, conf=self.conf, verbose=False)
             self._last_infer_ms = (time.perf_counter() - t0) * 1000
-            
-            # Reescala coordenadas para a resolução original
-            sx = w / self.infer_size
-            sy = h / self.infer_size
+
             self._last_boxes = []
-            
             for r in results:
                 for box in r.boxes:
-                    x1, y1, x2, y2 = box.xyxy[0].tolist()
+                    # Converte bbox do espaço letterboxed para o original
+                    bbox_lb = box.xyxy[0].numpy().reshape(1, 4)
+                    x1, y1, x2, y2 = self.preprocessor.adjust_boxes(bbox_lb, preproc_result)[0]
                     label = self.model.names[int(box.cls[0])]
                     conf = float(box.conf[0])
                     self._last_boxes.append((
                         label, conf,
-                        int(x1 * sx), int(y1 * sy),
-                        int(x2 * sx), int(y2 * sy)
+                        int(x1), int(y1),
+                        int(x2), int(y2)
                     ))
-                    
+
         # ── Desenha bounding boxes ────────────────────────────
         output = frame.copy()
         for (label, conf, x1, y1, x2, y2) in self._last_boxes:
@@ -190,18 +191,18 @@ class RealtimeDetector:
                 output, caption, (x1 + 2, y1 - 4),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 1
             )
-            
+
         # ── OSD: métricas sobrepostas ─────────────────────────
         fps_display = (len(self._fps_window) / sum(self._fps_window)) if self._fps_window else 0
         is_infer_frame = (self._frame_idx % self.infer_every == 0)
-        
+
         osd_lines = [
             f"FPS: {fps_display:.1f}",
             f"Infer: {self._last_infer_ms:.0f}ms",
             f"Det: {len(self._last_boxes)}",
             f"Frame: {self._frame_idx}",
         ]
-        
+
         for i, line in enumerate(osd_lines):
             y = 28 + i * 26
             color = (0, 255, 255) if is_infer_frame else (200, 200, 200)
@@ -232,7 +233,7 @@ def main():
     args = parse_args()
     camera = OptimizedCamera(args.device, args.width, args.height, args.fps)
     detector = RealtimeDetector(args.model, args.conf, args.infer_every, args.infer_size)
-    
+
     writer = None
     if args.output:
         fourcc = cv2.VideoWriter_fourcc(*'XVID')
@@ -241,26 +242,26 @@ def main():
             (args.width, args.height)
         )
         print(f"[INFO] Gravando saída em: {args.output}")
-        
+
     camera.start()
     time.sleep(0.5)
-    
+
     print("[INFO] Stream iniciado. Pressione Ctrl+C para encerrar.")
     if not args.no_display:
         print("[INFO] Pressione 'q' na janela para encerrar.")
-        
+
     try:
         while True:
             frame = camera.read(timeout=2.0)
             if frame is None:
                 print("[AVISO] Timeout na leitura.")
                 continue
-                
+
             annotated = detector.process(frame)
-            
+
             if writer:
                 writer.write(annotated)
-                
+
             if not args.no_display:
                 cv2.imshow("YOLO — Tempo Real (pressione q para sair)", annotated)
                 if cv2.waitKey(1) & 0xFF == ord('q'):
