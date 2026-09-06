@@ -1,5 +1,4 @@
 version: "3.8"
-
 services:
   yolo-api:
     image: ghcr.io/rafafeitos/yolo-edge-api/yolo-api:sha-2fbd301
@@ -14,7 +13,7 @@ services:
       - ./output:/app/output           # resultados gravados aqui
       - ./images:/app/images:ro        # imagens de teste
     environment:
-      - MODEL_NAME=yolov8n.pt
+      - MODEL_NAME=yolo-epi.pt
     networks:
       - yolo-net
     restart: unless-stopped
@@ -23,7 +22,6 @@ services:
       interval: 15s
       timeout: 5s
       retries: 3
-
   yolo-client:
     build:
       context: .
@@ -39,7 +37,6 @@ services:
     depends_on:
       yolo-api:
         condition: service_healthy     # aguarda healthcheck passar
-
   yolo-stream:
     build:
       context: .
@@ -58,6 +55,7 @@ services:
     command: >
       python3 stream/mjpeg_server.py
         --device 0
+        --model models/yolo-epi.pt
         --infer-every 3
         --infer-size 320
         --port 5000
@@ -66,7 +64,6 @@ services:
     restart: unless-stopped
     depends_on:
       - yolo-api
-
 networks:
   yolo-net:
     driver: bridge
